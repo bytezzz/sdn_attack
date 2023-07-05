@@ -8,17 +8,21 @@ import time
 import os
 import random
 import numpy as np
+import pickle
 
 import aux_funcs  as af
 import network_architectures as arcs
 
 from architectures.CNNs.VGG import VGG
 
-def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='cpu'):
+def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='cpu', ckpt = None, start_epoch = 0):
     print('Training models...')
 
     for base_model in untrained_models:
         trained_model, model_params = arcs.load_model(models_path, base_model, 0)
+        if ckpt:
+            with open(ckpt, 'rb') as f:
+                trained_model = pickle.load(f)
         dataset = af.get_dataset(model_params['task'])
 
         learning_rate = model_params['learning_rate']
@@ -26,7 +30,7 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
         weight_decay = model_params['weight_decay']
         milestones = model_params['milestones']
         gammas = model_params['gammas']
-        num_epochs = model_params['epochs']
+        num_epochs = model_params['epochs'] - start_epoch
 
         model_params['optimizer'] = 'SGD'
 

@@ -9,6 +9,7 @@ import time
 import random
 from exputil import evaluate_attack
 import torchattacks
+import pickle
 
 import torch.nn as nn
 import numpy as np
@@ -334,8 +335,7 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
 
     for epoch in range(1, epochs+1):
-        scheduler.step()
-
+ 
         cur_lr = af.get_lr(optimizer)
 
         if not hasattr(model, 'augment_training') or model.augment_training:
@@ -349,6 +349,8 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Cur lr: {}'.format(cur_lr))
         for x, y in tqdm(train_loader, desc=f'Training Epoch {epoch}'):
             cnn_training_step(model, optimizer, x, y, device)
+
+        scheduler.step()
 
         end_time = time.time()
 
@@ -373,6 +375,10 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
 
         metrics['lrs'].append(cur_lr)
+        
+        with open('checkpoints/ckpt.pickle', "wb") as ckpt:
+            pickle.dump(model, ckpt, pickle.HIGHEST_PROTOCOL)
+            print("Epoch {} has been saved!!!".format(epoch))
 
     return metrics
 

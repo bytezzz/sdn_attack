@@ -89,13 +89,14 @@ class ResNet_SDN(nn.Module):
         self.end_depth = 1
         self.cur_output_id = 0
 
-        self.stop_ic_id = -1
-
         self.init_rpf_channels = params['init_rpf_pannel']
         self.use_rpf = params['use_rpf']
 
         if self.block_type == 'basic':
             self.block = BasicBlockWOutput
+        
+        self.early_stop = False
+        self.need_info = False
 
         init_conv = []
 
@@ -173,6 +174,8 @@ class ResNet_SDN(nn.Module):
             return out
 
     def forward(self, x):
+        if self.early_stop:
+            return self.early_exit(x)
         outputs = []
         if self.use_rpf:
             fwd = self.init_conv[0](x)
@@ -183,8 +186,6 @@ class ResNet_SDN(nn.Module):
         for layer in self.layers:
             fwd, is_output, output = layer(fwd)
             if is_output:
-                if len(outputs) == self.stop_ic_id:
-                    return output
                 outputs.append(output)
         fwd = self.end_layers(fwd)
         outputs.append(fwd)
@@ -193,33 +194,38 @@ class ResNet_SDN(nn.Module):
 
     # takes a single input
     def early_exit(self, x):
+        device = next(self.parameters()).device
         confidences = []
-        outputs = []
-
-        fwd = self.init_conv(x)
+        batch_size = x.shape[0]
+        outputs = [0] * batch_size
+        result_prob = torch.zeros((batch_size,self.num_classes), dtype=torch.float).to(device)
+        stop_at = torch.zeros(batch_size).to(device)
+        stopped = torch.tensor([0]*batch_size, dtype=torch.bool).to(device)
+        if self.use_rpf:
+            fwd = self.init_conv[0](x)
+            fwd = self.rp_forward(x, fwd, self.init_conv[1])
+            fwd = self.init_conv[2](fwd)
+        else:
+            fwd = self.init_conv(x)
         output_id = 0
         for layer in self.layers:
             fwd, is_output, output = layer(fwd)
 
             if is_output:
-                outputs.append(output)
-                softmax = nn.functional.softmax(output[0], dim=0)
-
-                confidence = torch.max(softmax)
-                confidences.append(confidence)
-
-                if confidence >= self.confidence_threshold:
-                    is_early = True
-                    return output, output_id, is_early
-
+                softmax = nn.functional.softmax(output, dim=1)
+                confidence = torch.max(softmax, dim=1)
+                stop_index = (confidence.values > self.confidence_threshold).view(-1) & ~stopped
+                result_prob[stop_index] = softmax[stop_index]
+                stop_at[stop_index] = output_id
+                stopped[stop_index] = True
                 output_id += is_output
 
         output = self.end_layers(fwd)
-        outputs.append(output)
-
-        softmax = nn.functional.softmax(output[0], dim=0)
-        confidence = torch.max(softmax)
-        confidences.append(confidence)
-        max_confidence_output = np.argmax(confidences)
-        is_early = False
-        return outputs[max_confidence_output], max_confidence_output, is_early
+        softmax = nn.functional.softmax(output, dim=1)
+        confidence = torch.max(softmax, dim=1)
+        result_prob[~stopped] = softmax[~stopped]
+        stop_at[stop_index] = -1
+        if self.need_info:
+            return result_prob, stop_at
+        else:
+            return result_prob
