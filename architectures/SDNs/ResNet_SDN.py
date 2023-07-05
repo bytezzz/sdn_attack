@@ -1,11 +1,11 @@
 import torch
+import math
+
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 
 import aux_funcs as af
 import model_funcs as mf
-import math
 
 class BasicBlockWOutput(nn.Module):
     expansion = 1
@@ -44,26 +44,26 @@ class BasicBlockWOutput(nn.Module):
         self.layers = layers
 
         if add_output:
-            self.output = af.InternalClassifier(input_size, self.expansion*channels, num_classes) 
+            self.output = af.InternalClassifier(input_size, self.expansion*channels, num_classes)
             self.no_output = False
 
         else:
             self.output = None
             self.forward = self.only_forward
             self.no_output = True
-            
+
     def forward(self, x):
         fwd = self.layers[0](x) # conv layers
         fwd = fwd + self.layers[1](x) # shortcut
         return self.layers[2](fwd), 1, self.output(fwd)         # output layers for this module
-    
+
     def only_output(self, x):
         fwd = self.layers[0](x) # conv layers
         fwd = fwd + self.layers[1](x) # shortcut
         fwd = self.layers[2](fwd) # activation
         out = self.output(fwd)         # output layers for this module
         return out
-    
+
     def only_forward(self, x):
         fwd = self.layers[0](x) # conv layers
         fwd = fwd + self.layers[1](x) # shortcut
@@ -89,6 +89,11 @@ class ResNet_SDN(nn.Module):
         self.end_depth = 1
         self.cur_output_id = 0
 
+        self.stop_ic_id = -1
+
+        self.init_rpf_channels = params['init_rpf_pannel']
+        self.use_rpf = params['use_rpf']
+
         if self.block_type == 'basic':
             self.block = BasicBlockWOutput
 
@@ -96,11 +101,19 @@ class ResNet_SDN(nn.Module):
 
         if self.input_size ==  32: # cifar10
             self.cur_input_size = self.input_size
-            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            if self.use_rpf:
+                init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+                init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            else:
+                init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
         else: # tiny imagenet
             self.cur_input_size = int(self.input_size/2)
-            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=2, padding=1, bias=False))
-            
+            if self.use_rpf:
+                init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+                init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            else:
+                init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=2, padding=1, bias=False))
+
         init_conv.append(nn.BatchNorm2d(self.in_channels))
         init_conv.append(nn.ReLU())
 
@@ -108,15 +121,15 @@ class ResNet_SDN(nn.Module):
 
         self.layers = nn.ModuleList()
         self.layers.extend(self._make_layer(self.in_channels, block_id=0, stride=1))
-        
+
         self.cur_input_size = int(self.cur_input_size/2)
         self.layers.extend(self._make_layer(32, block_id=1, stride=2))
-        
+
         self.cur_input_size = int(self.cur_input_size/2)
         self.layers.extend(self._make_layer(64, block_id=2, stride=2))
-        
+
         end_layers = []
-        
+
         end_layers.append(nn.AvgPool2d(kernel_size=8))
         end_layers.append(af.Flatten())
         end_layers.append(nn.Linear(64*self.block.expansion, self.num_classes))
@@ -146,12 +159,32 @@ class ResNet_SDN(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
+    def random_rp_matrix(self):
+        param = next(self.init_conv[0].parameters())
+        kernel_size = param.data.size()[-1]
+        param.data = torch.normal(mean=0.0, std=1/kernel_size, size=param.data.size()).to('cuda')
+
+    def rp_forward(self, x, out, kernel):
+        rp_out = kernel(x)
+        if out is None:
+            return rp_out
+        else:
+            out = torch.cat([out, rp_out], dim=1)
+            return out
+
     def forward(self, x):
         outputs = []
-        fwd = self.init_conv(x)
+        if self.use_rpf:
+            fwd = self.init_conv[0](x)
+            fwd = self.rp_forward(x, fwd, self.init_conv[1])
+            fwd = self.init_conv[2](fwd)
+        else:
+            fwd = self.init_conv(x)
         for layer in self.layers:
             fwd, is_output, output = layer(fwd)
             if is_output:
+                if len(outputs) == self.stop_ic_id:
+                    return output
                 outputs.append(output)
         fwd = self.end_layers(fwd)
         outputs.append(fwd)
@@ -171,14 +204,14 @@ class ResNet_SDN(nn.Module):
             if is_output:
                 outputs.append(output)
                 softmax = nn.functional.softmax(output[0], dim=0)
-                
+
                 confidence = torch.max(softmax)
                 confidences.append(confidence)
-            
+
                 if confidence >= self.confidence_threshold:
                     is_early = True
                     return output, output_id, is_early
-                
+
                 output_id += is_output
 
         output = self.end_layers(fwd)

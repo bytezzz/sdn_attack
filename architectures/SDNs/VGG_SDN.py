@@ -107,6 +107,7 @@ class VGG_SDN(nn.Module):
         self.num_classes = int(params['num_classes'])
         self.conv_channels = params['conv_channels'] # the first element is input dimension
         self.fc_layer_sizes = params['fc_layers']
+        self.output_layer = -1
 
         # read or assign defaults to the rest
         self.max_pool_sizes = params['max_pool_sizes']
@@ -178,14 +179,17 @@ class VGG_SDN(nn.Module):
     def forward(self, x):
         outputs = []
         fwd = self.init_conv(x)
-        for layer in self.layers:
+        for layer_id, layer in enumerate(self.layers):
             fwd, is_output, output = layer(fwd)
             if is_output:
                 outputs.append(output)
+                if layer_id == self.output_layer:
+                    return output
         fwd = self.end_layers(fwd)
         outputs.append(fwd)
 
         return outputs
+    
 
     # takes a single input
     def early_exit(self, x):

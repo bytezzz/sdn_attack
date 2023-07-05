@@ -28,7 +28,8 @@ from architectures.SDNs.WideResNet_SDN import WideResNet_SDN
 from architectures.CNNs.WideResNet import WideResNet
 
 
-def save_networks(model_name, model_params, models_path, save_type):
+
+def save_networks(model_name, model_params, models_path, save_type, in_memory = False):
     cnn_name = model_name+'_cnn'
     sdn_name = model_name+'_sdn'
 
@@ -42,31 +43,36 @@ def save_networks(model_name, model_params, models_path, save_type):
             model = WideResNet(model_params)
         elif 'resnet' in network_type:
             model = ResNet(model_params)
-        elif 'vgg' in network_type: 
+        elif 'vgg' in network_type:
             model = VGG(model_params)
         elif 'mobilenet' in network_type:
             model = MobileNet(model_params)
-        
 
-        save_model(model, model_params, models_path, cnn_name, epoch=0)
+        if not in_memory:
+            save_model(model, model_params, models_path, cnn_name, epoch=0)
+        else:
+            return model
 
     if 'd' in save_type:
         print('Saving SDN...')
         model_params['architecture'] = 'sdn'
         model_params['base_model'] = sdn_name
         network_type = model_params['network_type']
-        
+
         if 'wideresnet' in network_type:
             model = WideResNet_SDN(model_params)
         elif 'resnet' in network_type:
             model = ResNet_SDN(model_params)
-        elif 'vgg' in network_type: 
+        elif 'vgg' in network_type:
             model = VGG_SDN(model_params)
         elif 'mobilenet' in network_type:
             model = MobileNet_SDN(model_params)
-        
-        save_model(model, model_params, models_path, sdn_name, epoch=0)
-        
+
+        if not in_memory:
+            save_model(model, model_params, models_path, sdn_name, epoch=0)
+        else:
+            return model
+
     return cnn_name, sdn_name
 
 def create_vgg16bn(models_path, task, save_type, get_params=False):
@@ -90,14 +96,14 @@ def create_vgg16bn(models_path, task, save_type, get_params=False):
     model_params['add_ic'] = [0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0] # 15, 30, 45, 60, 75, 90 percent of GFLOPs
 
     get_lr_params(model_params)
-    
+
     if get_params:
         return model_params
-    
+
     return save_networks(model_name, model_params, models_path, save_type)
 
 
-def create_resnet56(models_path, task, save_type, get_params=False):
+def create_resnet56(models_path, task, save_type, get_params=False, in_memory=False):
     print('Creating resnet56 untrained {} models...'.format(task))
     model_params = get_task_params(task)
     model_params['block_type'] = 'basic'
@@ -111,12 +117,35 @@ def create_resnet56(models_path, task, save_type, get_params=False):
     model_params['init_weights'] = True
 
     get_lr_params(model_params)
-    
+
 
     if get_params:
         return model_params
 
-    return save_networks(model_name, model_params, models_path, save_type)
+    return save_networks(model_name, model_params, models_path, save_type, in_memory)
+
+def create_resnet56_rpf(models_path, task, save_type, get_params=False, in_memory=False):
+    print('Creating resnet56 untrained {} models...'.format(task))
+    model_params = get_task_params(task)
+    model_params['block_type'] = 'basic'
+    model_params['num_blocks'] = [9,9,9]
+    model_params['add_ic'] = [[0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 0, 1, 0, 0], [0, 1, 0, 0, 0, 1, 0, 0, 0]] # 15, 30, 45, 60, 75, 90 percent of GFLOPs
+
+    model_params['init_rpf_pannel'] = 8
+    model_params['use_rpf'] = True
+    model_name = '{}_resnet56_rpf'.format(task)
+
+    model_params['network_type'] = 'resnet56_rpf'
+    model_params['augment_training'] = True
+    model_params['init_weights'] = True
+
+    get_lr_params(model_params)
+
+
+    if get_params:
+        return model_params
+
+    return save_networks(model_name, model_params, models_path, save_type, in_memory)
 
 
 def create_wideresnet32_4(models_path, task, save_type, get_params=False):
@@ -146,7 +175,7 @@ def create_mobilenet(models_path, task, save_type, get_params=False):
     print('Creating MobileNet untrained {} models...'.format(task))
     model_params = get_task_params(task)
     model_name = '{}_mobilenet'.format(task)
-    
+
     model_params['network_type'] = 'mobilenet'
     model_params['cfg'] = [64, (128,2), 128, (256,2), 256, (512,2), 512, 512, 512, 512, 512, (1024,2), 1024]
     model_params['augment_training'] = True
@@ -199,7 +228,7 @@ def get_lr_params(model_params):
 
     else:
         model_params['weight_decay'] = 0.0001
-    
+
     model_params['learning_rate'] = 0.1
     model_params['epochs'] = 100
     model_params['milestones'] = [35, 60, 85]
@@ -211,14 +240,14 @@ def get_lr_params(model_params):
     model_params['ic_only']['epochs'] = 25
     model_params['ic_only']['milestones'] = [15]
     model_params['ic_only']['gammas'] = [0.1]
-    
+
 
 
 def save_model(model, model_params, models_path, model_name, epoch=-1):
     if not os.path.exists(models_path):
         os.makedirs(models_path)
-    
-    
+
+
     network_path = models_path + '/' + model_name
 
     if not os.path.exists(network_path):
@@ -255,11 +284,11 @@ def load_params(models_path, model_name, epoch=0):
 def load_model(models_path, model_name, epoch=0):
     model_params = load_params(models_path, model_name, epoch)
 
-    architecture = 'empty' if 'architecture' not in model_params else model_params['architecture'] 
+    architecture = 'empty' if 'architecture' not in model_params else model_params['architecture']
     network_type = model_params['network_type']
 
     if architecture == 'sdn' or 'sdn' in model_name:
-            
+
         if 'wideresnet' in network_type:
             model = WideResNet_SDN(model_params)
         elif 'resnet' in network_type:
@@ -268,7 +297,7 @@ def load_model(models_path, model_name, epoch=0):
             model = VGG_SDN(model_params)
         elif 'mobilenet' in network_type:
             model = MobileNet_SDN(model_params)
-        
+
     elif architecture == 'cnn' or 'cnn' in model_name:
         if 'wideresnet' in network_type:
             model = WideResNet(model_params)

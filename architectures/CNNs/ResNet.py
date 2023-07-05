@@ -12,7 +12,7 @@ class BasicBlock(nn.Module):
 
     def __init__(self, in_channels, channels, stride=1):
         super(BasicBlock, self).__init__()
-        
+
         layers = nn.ModuleList()
 
         conv_layer = []
@@ -36,7 +36,7 @@ class BasicBlock(nn.Module):
         layers.append(nn.ReLU(inplace=True))
 
         self.layers = layers
-            
+
     def forward(self, x):
         fwd = self.layers[0](x) # conv layers
         fwd += self.layers[1](x) # shortcut
@@ -56,16 +56,30 @@ class ResNet(nn.Module):
         self.in_channels = 16
         self.num_output =  1
 
+
+        self.init_rpf_channels = params['init_rpf_pannel']
+        self.use_rpf = params['use_rpf']
+
         if self.block_type == 'basic':
             self.block = BasicBlock
 
         init_conv = []
 
         if self.input_size ==  32: # cifar10 and cifar100
-            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
-        elif self.input_size == 64: # tiny imagenet
-            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=2, padding=1, bias=False))
-            
+            if self.use_rpf:
+                init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+                init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            else:
+                init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
+        else: # tiny imagenet
+            self.cur_input_size = int(self.input_size/2)
+            if self.use_rpf:
+                init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+                init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            else:
+                init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=2, padding=1, bias=False))
+
+
         init_conv.append(nn.BatchNorm2d(self.in_channels))
         init_conv.append(nn.ReLU(inplace=True))
 
@@ -75,7 +89,7 @@ class ResNet(nn.Module):
         self.layers.extend(self._make_layer(self.in_channels, block_id=0, stride=1))
         self.layers.extend(self._make_layer(32, block_id=1, stride=2))
         self.layers.extend(self._make_layer(64, block_id=2, stride=2))
-        
+
         end_layers = []
 
         end_layers.append(nn.AvgPool2d(kernel_size=8))
@@ -94,15 +108,32 @@ class ResNet(nn.Module):
             self.in_channels = channels * self.block.expansion
         return layers
 
+    def rp_forward(self, x, out, kernel):
+        rp_out = kernel(x)
+        if out is None:
+            return rp_out
+        else:
+            out = torch.cat([out, rp_out], dim=1)
+            return out
+
     def forward(self, x):
-        out = self.init_conv(x)
-        
+        if self.use_rpf:
+            out = self.init_conv[0](x)
+            out = self.rp_forward(x, out, self.init_conv[1])
+        else:
+            out = self.init_conv(x)
+
         for layer in self.layers:
             out = layer(out)
 
         out = self.end_layers(out)
 
         return out
+
+    def random_rp_matrix(self):
+        param = next(self.init_conv[0].parameters())
+        kernel_size = param.data.size()[-1]
+        param.data = torch.normal(mean=0.0, std=1/kernel_size, size=param.data.size()).to('cuda')
 
     def initialize_weights(self):
         for m in self.modules():

@@ -40,8 +40,12 @@ class Logger(object):
             self.terminal = sys.stdout
         else:
             self.terminal = sys.stderr
-
-        self.log = open('{}.{}'.format(log_file, mode), "a")
+        
+        path = '{}.{}'.format(log_file, mode)
+        if not os.path.exists(path):
+            self.log = open(path,"w")
+        else:
+            self.log = open(path,"a")
 
     def write(self, message):
         self.terminal.write(message)

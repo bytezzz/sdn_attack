@@ -7,6 +7,8 @@ import math
 import copy
 import time
 import random
+from exputil import evaluate_attack
+import torchattacks
 
 import torch.nn as nn
 import numpy as np
@@ -14,9 +16,17 @@ import numpy as np
 from torch.optim import SGD
 from random import choice, shuffle
 from collections import Counter
+from tqdm import tqdm
 
 import aux_funcs as af
 import data
+
+from utils import clamp, get_loaders, get_limit
+
+std, upper_limit, lower_limit = get_limit("cifar10")
+epsilon = (8 / 255.) / std
+alpha = (2 / 255.) / std
+attack_iters = 10
 
 
 def sdn_training_step(optimizer, model, coeffs, batch, device):
@@ -47,7 +57,7 @@ def sdn_ic_only_step(optimizer, model, batch, device):
     for output_id, cur_output in enumerate(output):
         if output_id == model.num_output - 1: # last output
             break
-        
+
         cur_loss = af.get_loss_criterion()(cur_output, b_y)
         total_loss += cur_loss
 
@@ -62,7 +72,7 @@ def get_loader(data, augment):
     else:
         train_loader = data.train_loader
 
-    return train_loader  
+    return train_loader
 
 
 def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
@@ -211,7 +221,7 @@ def sdn_get_confusion(model, loader, confusion_stats, device='cpu'):
             output = model(b_x)
             output = [nn.functional.softmax(out, dim=1) for out in output]
             cur_confusion = af.get_confusion_scores(output, confusion_stats, device)
-            
+
             for test_id in range(len(b_x)):
                 cur_instance_id = test_id + cur_batch_id*loader.batch_size
                 instance_confusion[cur_instance_id] = cur_confusion[test_id].cpu().numpy()
@@ -279,10 +289,40 @@ def sdn_test_early_exits(model, loader, device='cpu'):
 
     return top1_acc, top5_acc, early_output_counts, non_conf_output_counts, total_time
 
+
+
 def cnn_training_step(model, optimizer, data, labels, device='cpu'):
     b_x = data.to(device)   # batch x
     b_y = labels.to(device)   # batch y
-    output = model(b_x)            # cnn final output
+    if  model.use_rpf:
+        # init delta
+        delta = torch.zeros_like(b_x).to('cuda')
+        for j in range(len(epsilon)):
+            delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
+        delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+        delta.requires_grad = True
+
+        # pgd attack
+        for _ in range(attack_iters):
+            output = model(b_x + delta)
+            loss = af.get_loss_criterion()(output, b_y)
+
+            loss.backward()
+
+            grad = delta.grad.detach()
+
+            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+            delta.grad.zero_()
+
+        delta = delta.detach()
+
+        # random select a path to infer
+        model.random_rp_matrix()
+
+        output = model(b_x + delta[:b_x.size(0)])
+    else:
+        output = model(b_x)            # cnn final output
     criterion = af.get_loss_criterion()
     loss = criterion(output, b_y)   # cross entropy loss
     optimizer.zero_grad()           # clear gradients for this training step
@@ -291,7 +331,7 @@ def cnn_training_step(model, optimizer, data, labels, device='cpu'):
 
 
 def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
-    metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[]}
+    metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
 
     for epoch in range(1, epochs+1):
         scheduler.step()
@@ -307,11 +347,11 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         model.train()
         print('Epoch: {}/{}'.format(epoch, epochs))
         print('Cur lr: {}'.format(cur_lr))
-        for x, y in train_loader:
+        for x, y in tqdm(train_loader, desc=f'Training Epoch {epoch}'):
             cnn_training_step(model, optimizer, x, y, device)
-        
+
         end_time = time.time()
-    
+
         top1_test, top5_test = cnn_test(model, data.test_loader, device)
         print('Top1 Test accuracy: {}'.format(top1_test))
         print('Top5 Test accuracy: {}'.format(top5_test))
@@ -327,10 +367,15 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Epoch took {} seconds.'.format(epoch_time))
         metrics['epoch_times'].append(epoch_time)
 
+        atk = torchattacks.FGSM(model, eps=8/255)
+        fgsm_acc = evaluate_attack(model, -1, data.test_loader, atk)
+        metrics['robust_accuracy_fgsm'].append(fgsm_acc)
+        print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
+
         metrics['lrs'].append(cur_lr)
 
     return metrics
-    
+
 
 def cnn_test_time(model, loader, device='cpu'):
     model.eval()
@@ -404,5 +449,5 @@ def cnn_get_confidence(model, loader, device='cpu'):
                 else:
                     wrong.add(cur_instance_id)
 
-   
+
     return correct, wrong, instance_confidence
