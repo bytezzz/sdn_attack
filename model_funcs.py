@@ -26,9 +26,9 @@ import data
 from utils import clamp, get_loaders, get_limit
 
 std, upper_limit, lower_limit = get_limit("cifar10")
-epsilon = (8 / 255.) / std
+epsilon = (4 / 255.) / std
 alpha = (2 / 255.) / std
-attack_iters = 10
+attack_iters = 5
 
 
 def sdn_training_step(optimizer, model, coeffs, batch, device):
@@ -150,7 +150,7 @@ def get_loader(data, augment):
 def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epoch = 0):
     print = tqdm.write
     augment = model.augment_training
-    metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[]}
+    metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
     max_coeffs = np.array([0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) # max tau_i --- C_i values
 
     if model.ic_only:
@@ -201,6 +201,15 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epo
         print('Epoch took {} seconds.'.format(epoch_time))
 
         metrics['lrs'].append(cur_lr)
+
+        model.early_stop = True
+        model.need_info = False
+        model.confidence_threshold = 0.9
+        atk = torchattacks.FGSM(model, eps=8/255)
+        fgsm_acc = evaluate_attack(model, -1, data.test_loader, atk)
+        metrics['robust_accuracy_fgsm'].append(fgsm_acc)
+        print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
+        model.early_stop = False
 
         scheduler.step()
 

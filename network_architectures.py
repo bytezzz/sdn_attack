@@ -230,7 +230,7 @@ def get_lr_params(model_params):
         model_params['weight_decay'] = 0.0001
 
     model_params['learning_rate'] = 0.1
-    model_params['epochs'] = 150
+    model_params['epochs'] = 175
     model_params['milestones'] = [60, 100, 125]
     model_params['gammas'] = [0.1, 0.1, 0.1]
 
