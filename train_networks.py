@@ -41,7 +41,7 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
             gammas = model_params['ic_only']['gammas']
 
             model_params['optimizer'] = 'Adam'
-            
+
             trained_model.ic_only = True
         else:
             trained_model.ic_only = False
@@ -65,7 +65,6 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
 
         print('Training: {}...'.format(trained_model_name))
         trained_model.to(device)
-        print(trained_model)
         metrics = trained_model.train_func(trained_model, dataset, num_epochs, optimizer, scheduler, device=device)
         model_params['train_top1_acc'] = metrics['train_top1_acc']
         model_params['test_top1_acc'] = metrics['test_top1_acc']
@@ -89,7 +88,7 @@ def train_sdns(models_path, networks, ic_only=False, device='cpu'):
         sdn_params = arcs.load_params(models_path, sdn_name)
         sdn_params = arcs.get_net_params(sdn_params['network_type'], sdn_params['task'])
         # load the CNN and convert it to a SDN
-        sdn_model, _ = af.cnn_to_sdn(models_path, cnn_to_tune, sdn_params, load_epoch)         
+        sdn_model, _ = af.cnn_to_sdn(models_path, cnn_to_tune, sdn_params, load_epoch)
         arcs.save_model(sdn_model, sdn_params, models_path, sdn_name, epoch=0) # save the resulting SDN
     train(models_path, networks, sdn=True, ic_only_sdn=ic_only, device=device)
 
@@ -97,7 +96,7 @@ def train_sdns(models_path, networks, ic_only=False, device='cpu'):
 def train_models(models_path, device='cpu'):
     #tasks = ['cifar10', 'cifar100', 'tinyimagenet']
     tasks = ['cifar10']
-    
+
     cnns = []
     sdns = []
 
@@ -132,7 +131,7 @@ def sdn_ic_only_backdoored(device):
 
     train(path, networks, sdn=True, ic_only_sdn=True, device=device)
 
-    
+
 def main():
     random_seed = af.get_random_seed()
     af.set_random_seeds()

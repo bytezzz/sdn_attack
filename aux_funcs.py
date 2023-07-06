@@ -40,7 +40,9 @@ class Logger(object):
             self.terminal = sys.stdout
         else:
             self.terminal = sys.stderr
-        
+
+
+
         path = '{}.{}'.format(log_file, mode)
         if not os.path.exists(path):
             self.log = open(path,"w")
@@ -161,7 +163,9 @@ def get_confusion_scores(outputs, normalize=None, device='cpu'):
         cur_disagreement = cur_disagreement.to(device)
         for instance_id in range(outputs[0].size(0)):
             confusion_scores[instance_id] +=  cur_disagreement[instance_id]
-    
+
+
+
     if normalize is not None:
         for instance_id in range(outputs[0].size(0)):
             cur_confusion_score = confusion_scores[instance_id]
@@ -206,7 +210,9 @@ def get_output_relative_depths(model):
     total_depth += model.end_depth
 
     #output_depths.append(total_depth)
- 
+
+
+
     return np.array(output_depths)/total_depth, total_depth
 
 
@@ -256,7 +262,7 @@ def get_sdn_ic_only_optimizer(model, lr_params, stepsize_params):
     for layer in model.layers:
         if layer.no_output == False:
             param_list.append({'params': filter(lambda p: p.requires_grad, layer.output.parameters())})
-        
+
     optimizer = Adam(param_list, lr=lr, weight_decay=weight_decay)
     scheduler = MultiStepMultiLR(optimizer, milestones=milestones, gammas=gammas)
 
@@ -289,7 +295,9 @@ def get_all_trained_models_info(models_path, use_profiler=False, device='gpu'):
             print(task)
             net_type = model_params['network_type']
             print(net_type)
-            
+
+
+
             top1_test = model_params['test_top1_acc']
             top1_train = model_params['train_top1_acc']
             top5_test = model_params['test_top5_acc']
@@ -317,7 +325,9 @@ def get_all_trained_models_info(models_path, use_profiler=False, device='gpu'):
                     total_ops, total_params = profile(model, input_size, device)
                     print("#Ops: %f GOps"%(total_ops/1e9))
                     print("#Parameters: %f M"%(total_params/1e6))
-            
+
+
+
             print('------------------------')
         except:
             print('FAIL: {}'.format(model_name))
@@ -332,7 +342,9 @@ def sdn_prune(sdn_path, sdn_name, prune_after_output, epoch=-1, preloaded=None):
     else:
         sdn_model = preloaded[0]
         sdn_params = preloaded[1]
-    
+
+
+
     output_layer = get_nth_occurance_index(sdn_model.add_output, prune_after_output)
 
     pruned_model = copy.deepcopy(sdn_model)
@@ -386,7 +398,9 @@ def cnn_to_sdn(cnn_path, cnn_name, sdn_params, epoch=-1, preloaded=None):
         sdn_layer = sdn_model.layers[layer_id]
         sdn_layer.layers = cnn_layer.layers
         layers.append(sdn_layer)
-    
+
+
+
     sdn_model.layers = layers
 
     sdn_model.end_layers = cnn_model.end_layers
@@ -413,7 +427,9 @@ def sdn_to_cnn(sdn_path, sdn_name, epoch=-1, preloaded=None):
         cnn_layer = cnn_model.layers[layer_id]
         cnn_layer.layers = sdn_layer.layers
         layers.append(cnn_layer)
-    
+
+
+
     cnn_model.layers = layers
 
     cnn_model.end_layers = sdn_model.end_layers
@@ -438,7 +454,9 @@ def save_tinyimagenet_classname():
     filename = 'tinyimagenet_classes'
     dataset = get_dataset('tinyimagenet')
     tinyimagenet_classes = {}
-    
+
+
+
     for index, name in enumerate(dataset.testset_paths.classes):
         tinyimagenet_classes[index] = name
 
@@ -449,7 +467,9 @@ def get_tinyimagenet_classes(prediction=None):
     filename = 'tinyimagenet_classes'
     with open(filename, 'rb') as f:
         tinyimagenet_classes = pickle.load(f)
-    
+
+
+
     if prediction is not None:
         return tinyimagenet_classes[prediction]
 

@@ -17,6 +17,7 @@ import numpy as np
 from torch.optim import SGD
 from random import choice, shuffle
 from collections import Counter
+import network_architectures as arcs
 from tqdm import tqdm
 
 import aux_funcs as af
@@ -33,7 +34,42 @@ attack_iters = 10
 def sdn_training_step(optimizer, model, coeffs, batch, device):
     b_x = batch[0].to(device)
     b_y = batch[1].to(device)
-    output = model(b_x)
+    if  model.use_rpf:
+        # init delta
+        delta = torch.zeros_like(b_x).to('cuda')
+        for j in range(len(epsilon)):
+            delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
+        delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+        delta.requires_grad = True
+
+        # pgd attack
+        for _ in range(attack_iters):
+            output = model(b_x + delta)
+            total_loss = 0.0
+
+            for ic_id in range(model.num_output - 1):
+                cur_output = output[ic_id]
+                cur_loss = float(coeffs[ic_id])*af.get_loss_criterion()(cur_output, b_y)
+                total_loss += cur_loss
+
+            total_loss += af.get_loss_criterion()(output[-1], b_y)
+
+            total_loss.backward()
+
+            grad = delta.grad.detach()
+
+            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+            delta.grad.zero_()
+
+        delta = delta.detach()
+
+        # random select a path to infer
+        model.random_rp_matrix()
+
+        output = model(b_x + delta[:b_x.size(0)])
+    else:
+        output = model(b_x)
     optimizer.zero_grad()  #clear gradients for this training step
     total_loss = 0.0
 
@@ -51,7 +87,42 @@ def sdn_training_step(optimizer, model, coeffs, batch, device):
 def sdn_ic_only_step(optimizer, model, batch, device):
     b_x = batch[0].to(device)
     b_y = batch[1].to(device)
-    output = model(b_x)
+    if  model.use_rpf:
+        # init delta
+        delta = torch.zeros_like(b_x).to('cuda')
+        for j in range(len(epsilon)):
+            delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
+        delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+        delta.requires_grad = True
+
+        # pgd attack
+        for _ in range(attack_iters):
+            output = model(b_x + delta)
+            total_loss = 0.0
+
+            for output_id, cur_output in enumerate(output):
+                if output_id == model.num_output - 1: # last output
+                    break
+
+            cur_loss = af.get_loss_criterion()(cur_output, b_y)
+            total_loss += cur_loss
+
+            total_loss.backward()
+
+            grad = delta.grad.detach()
+
+            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            delta.data = clamp(delta, lower_limit - b_x, upper_limit - b_x)
+            delta.grad.zero_()
+
+        delta = delta.detach()
+
+        # random select a path to infer
+        model.random_rp_matrix()
+
+        output = model(b_x + delta[:b_x.size(0)])
+    else:
+        output = model(b_x)
     optimizer.zero_grad()  #clear gradients for this training step
     total_loss = 0.0
 
@@ -76,7 +147,8 @@ def get_loader(data, augment):
     return train_loader
 
 
-def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
+def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epoch = 0):
+    print = tqdm.write
     augment = model.augment_training
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[]}
     max_coeffs = np.array([0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) # max tau_i --- C_i values
@@ -86,8 +158,7 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
     else:
         print('sdn will be trained from scratch...(The SDN training)')
 
-    for epoch in range(1, epochs+1):
-        scheduler.step()
+    for epoch in range(start_epoch, start_epoch+epochs+1):
         cur_lr = af.get_lr(optimizer)
         print('\nEpoch: {}/{}'.format(epoch, epochs))
         print('Cur lr: {}'.format(cur_lr))
@@ -101,7 +172,7 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         start_time = time.time()
         model.train()
         loader = get_loader(data, augment)
-        for i, batch in enumerate(loader):
+        for i, batch in tqdm(enumerate(loader), total= len(loader), desc = f'Trainging Epoch {epoch}'):
             if model.ic_only is False:
                 total_loss = sdn_training_step(optimizer, model, cur_coeffs, batch, device)
             else:
@@ -130,6 +201,8 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Epoch took {} seconds.'.format(epoch_time))
 
         metrics['lrs'].append(cur_lr)
+
+        scheduler.step()
 
     return metrics
 
@@ -291,7 +364,6 @@ def sdn_test_early_exits(model, loader, device='cpu'):
     return top1_acc, top5_acc, early_output_counts, non_conf_output_counts, total_time
 
 
-
 def cnn_training_step(model, optimizer, data, labels, device='cpu'):
     b_x = data.to(device)   # batch x
     b_y = labels.to(device)   # batch y
@@ -332,10 +404,11 @@ def cnn_training_step(model, optimizer, data, labels, device='cpu'):
 
 
 def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
+    print = tqdm.write
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
 
     for epoch in range(1, epochs+1):
- 
+
         cur_lr = af.get_lr(optimizer)
 
         if not hasattr(model, 'augment_training') or model.augment_training:
@@ -375,10 +448,6 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
 
         metrics['lrs'].append(cur_lr)
-        
-        with open('checkpoints/ckpt.pickle', "wb") as ckpt:
-            pickle.dump(model, ckpt, pickle.HIGHEST_PROTOCOL)
-            print("Epoch {} has been saved!!!".format(epoch))
 
     return metrics
 
