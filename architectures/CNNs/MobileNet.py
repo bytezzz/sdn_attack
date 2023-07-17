@@ -36,9 +36,17 @@ class MobileNet(nn.Module):
         self.test_func = mf.cnn_test
         self.num_output = 1
         self.in_channels = 32
+
+        self.init_rpf_channels = params['init_rpf_pannel']
+        self.use_rpf = params['use_rpf']
+
         init_conv = []
-        
-        init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
+
+        if self.use_rpf:
+            init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+        else:
+            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
         init_conv.append(nn.BatchNorm2d(self.in_channels))
         init_conv.append(nn.ReLU(inplace=True))
         self.init_conv = nn.Sequential(*init_conv)
@@ -66,8 +74,28 @@ class MobileNet(nn.Module):
             in_channels = out_channels
         return layers
 
+    def rp_forward(self, x, out, kernel):
+        rp_out = kernel(x)
+        if out is None:
+            return rp_out
+        else:
+            out = torch.cat([out, rp_out], dim=1)
+            return out
+
+    def random_rp_matrix(self):
+        param = next(self.init_conv[0].parameters())
+        kernel_size = param.data.size()[-1]
+        param.data = torch.normal(mean=0.0, std=1/kernel_size, size=param.data.size()).to('cuda')
+
     def forward(self, x):
-        fwd = self.init_conv(x)
+        if self.use_rpf:
+            out = self.init_conv[0](x)
+            out = self.rp_forward(x, out, self.init_conv[1])
+        else:
+            out = self.init_conv(x)
+
+        fwd = out
+
         for layer in self.layers:
             fwd = layer(fwd)
 

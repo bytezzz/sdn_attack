@@ -1,13 +1,14 @@
 import torchattacks
+
+import torchattacks
 import torch
 import torch.nn.functional as F
 
-def evaluate_attack(model, layer_id, test_loader, atk, normalization):
-    atk.set_normalization_used(mean = normalization[0], std = normalization[1])
+def evaluate_sdn_attack(model, test_loader, atk):
+    atk.set_normalization_used(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     test_acc = 0
     n = 0
     model.eval()
-    model.stop_ic_id = layer_id
     for i, (X, y) in enumerate(test_loader):
         X, y = X.to('cuda'), y.to('cuda')
 
@@ -26,3 +27,4 @@ def evaluate_attack(model, layer_id, test_loader, atk, normalization):
 
     pgd_acc = test_acc / n
     return pgd_acc
+

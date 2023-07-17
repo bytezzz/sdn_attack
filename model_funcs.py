@@ -19,19 +19,18 @@ from random import choice, shuffle
 from collections import Counter
 import network_architectures as arcs
 from tqdm import tqdm
+import wandb
 
 import aux_funcs as af
 import data
 
-from utils import clamp, get_loaders, get_limit
-
-std, upper_limit, lower_limit = get_limit("cifar10")
-epsilon = (4 / 255.) / std
-alpha = (2 / 255.) / std
-attack_iters = 5
+from utils import clamp, get_loaders, get_limit, get_normalization
 
 
-def sdn_training_step(optimizer, model, coeffs, batch, device):
+
+def sdn_training_step(optimizer, model, coeffs, batch, device, attack_config):
+    epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit = attack_config
+    model.need_info = True
     b_x = batch[0].to(device)
     b_y = batch[1].to(device)
     if  model.use_rpf:
@@ -84,7 +83,8 @@ def sdn_training_step(optimizer, model, coeffs, batch, device):
 
     return total_loss
 
-def sdn_ic_only_step(optimizer, model, batch, device):
+def sdn_ic_only_step(optimizer, model, batch, device, attack_config):
+    epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit = attack_config
     b_x = batch[0].to(device)
     b_y = batch[1].to(device)
     if  model.use_rpf:
@@ -103,9 +103,8 @@ def sdn_ic_only_step(optimizer, model, batch, device):
             for output_id, cur_output in enumerate(output):
                 if output_id == model.num_output - 1: # last output
                     break
-
-            cur_loss = af.get_loss_criterion()(cur_output, b_y)
-            total_loss += cur_loss
+                cur_loss = af.get_loss_criterion()(cur_output, b_y)
+                total_loss += cur_loss
 
             total_loss.backward()
 
@@ -147,7 +146,7 @@ def get_loader(data, augment):
     return train_loader
 
 
-def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epoch = 0):
+def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
     print = tqdm.write
     augment = model.augment_training
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
@@ -158,7 +157,15 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epo
     else:
         print('sdn will be trained from scratch...(The SDN training)')
 
-    for epoch in range(start_epoch, start_epoch+epochs+1):
+
+    std, upper_limit, lower_limit = get_limit(data)
+    epsilon = (4 / 255.) / std
+    alpha = (2 / 255.) / std
+    attack_iters = 5
+    attack_config = (epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit)
+    normalization = get_normalization(data)
+
+    for epoch in range(1, epochs+1):
         cur_lr = af.get_lr(optimizer)
         print('\nEpoch: {}/{}'.format(epoch, epochs))
         print('Cur lr: {}'.format(cur_lr))
@@ -174,7 +181,7 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epo
         loader = get_loader(data, augment)
         for i, batch in tqdm(enumerate(loader), total= len(loader), desc = f'Trainging Epoch {epoch}'):
             if model.ic_only is False:
-                total_loss = sdn_training_step(optimizer, model, cur_coeffs, batch, device)
+                total_loss = sdn_training_step(optimizer, model, cur_coeffs, batch, device, attack_config=attack_config)
             else:
                 total_loss = sdn_ic_only_step(optimizer, model, batch, device)
 
@@ -206,10 +213,25 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu', start_epo
         model.need_info = False
         model.confidence_threshold = 0.9
         atk = torchattacks.FGSM(model, eps=8/255)
-        fgsm_acc = evaluate_attack(model, -1, data.test_loader, atk)
-        metrics['robust_accuracy_fgsm'].append(fgsm_acc)
-        print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
+        fgsm_acc_90_percent = evaluate_attack(model, -1, data.test_loader, atk, normalization)
+
+        model.confidence_threshold = 0.8
+        fgsm_acc_80_percent = evaluate_attack(model, -1, data.test_loader, atk, normalization)
+
         model.early_stop = False
+        atk = torchattacks.FGSM(model, eps=8/255)
+        fgsm_acc_no_early_stop = evaluate_attack(model, -1, data.test_loader, atk, normalization)
+
+        wandb.log({"test_top1_acc" : top1_test,
+                   "test_top5_acc" : top5_test,
+                   "train_top1_acc": top1_train,
+                   "train_top5_acc" : top5_train,
+                   "Robust_Acc_no_early_exit" : fgsm_acc_no_early_stop,
+                   "Robust_Acc_thres_80%" : fgsm_acc_80_percent,
+                   "Robust_Acc_thres_90%" : fgsm_acc_90_percent,
+                   "lr" : cur_lr,
+                   "loss" : total_loss
+        })
 
         scheduler.step()
 
@@ -373,7 +395,8 @@ def sdn_test_early_exits(model, loader, device='cpu'):
     return top1_acc, top5_acc, early_output_counts, non_conf_output_counts, total_time
 
 
-def cnn_training_step(model, optimizer, data, labels, device='cpu'):
+def cnn_training_step(model, optimizer, data, labels, attack_config ,device='cpu'):
+    epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit = attack_config
     b_x = data.to(device)   # batch x
     b_y = labels.to(device)   # batch y
     if  model.use_rpf:
@@ -410,11 +433,19 @@ def cnn_training_step(model, optimizer, data, labels, device='cpu'):
     optimizer.zero_grad()           # clear gradients for this training step
     loss.backward()                 # backpropagation, compute gradients
     optimizer.step()                # apply gradients
+    return loss
 
 
 def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
     print = tqdm.write
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
+
+    std, upper_limit, lower_limit = get_limit(data)
+    epsilon = (4 / 255.) / std
+    alpha = (2 / 255.) / std
+    attack_iters = 5
+    attack_config = (epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit)
+    normalization = get_normalization(data)
 
     for epoch in range(1, epochs+1):
 
@@ -430,7 +461,7 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         print('Epoch: {}/{}'.format(epoch, epochs))
         print('Cur lr: {}'.format(cur_lr))
         for x, y in tqdm(train_loader, desc=f'Training Epoch {epoch}'):
-            cnn_training_step(model, optimizer, x, y, device)
+            loss = cnn_training_step(model, optimizer, x, y, attack_config=attack_config,device = device)
 
         scheduler.step()
 
@@ -452,11 +483,19 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
         metrics['epoch_times'].append(epoch_time)
 
         atk = torchattacks.FGSM(model, eps=8/255)
-        fgsm_acc = evaluate_attack(model, -1, data.test_loader, atk)
+        fgsm_acc = evaluate_attack(model, -1, data.test_loader, atk, normalization)
         metrics['robust_accuracy_fgsm'].append(fgsm_acc)
         print('Robust Accuracy again FGSM : {}'.format(fgsm_acc))
 
         metrics['lrs'].append(cur_lr)
+        wandb.log({"test_top1_acc" : top1_test,
+                   "test_top5_acc" : top5_test,
+                   "train_top1_acc": top1_train,
+                   "train_top5_acc" : top5_train,
+                   "Robust Accuracy" : fgsm_acc,
+                   "lr" : cur_lr,
+                   "loss" : loss
+        })
 
     return metrics
 

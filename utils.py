@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
+from data import CIFAR10, CIFAR100
 import numpy as np
 import os
 import sys
@@ -77,10 +78,10 @@ class Logger(object):
 
 def get_limit(dataset):
     """Attack constraints"""
-    if dataset == 'cifar10':
+    if isinstance(dataset, CIFAR10):
         mu = torch.tensor(cifar10_mean).view(3, 1, 1).to('cuda')
         std = torch.tensor(cifar10_std).view(3, 1, 1).to('cuda')
-    elif dataset == 'cifar100':
+    elif isinstance(dataset, CIFAR100):
         mu = torch.tensor(cifar100_mean).view(3, 1, 1).to('cuda')
         std = torch.tensor(cifar100_std).view(3, 1, 1).to('cuda')
     else:
@@ -292,6 +293,11 @@ def evaluate_pgd(test_loader, model, attack_iters, restarts, args):
 
     return pgd_loss/n, pgd_acc/n
 
+def get_normalization(data):
+    if isinstance(data, CIFAR10):
+        return ([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
+    elif isinstance(data, CIFAR100):
+        return ([0.507, 0.487, 0.441],[0.267, 0.256, 0.276])
 
 def evaluate_pgd_rp(test_loader, model, attack_iters, restarts, args, num_round=3):
     """Evaluate with RPF under pgd attack"""

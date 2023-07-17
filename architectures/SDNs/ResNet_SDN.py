@@ -94,7 +94,7 @@ class ResNet_SDN(nn.Module):
 
         if self.block_type == 'basic':
             self.block = BasicBlockWOutput
-        
+
         self.early_stop = False
         self.need_info = False
 
@@ -190,7 +190,11 @@ class ResNet_SDN(nn.Module):
         fwd = self.end_layers(fwd)
         outputs.append(fwd)
 
-        return outputs
+
+        if self.need_info:
+            return outputs
+        else:
+            return nn.functional.softmax(fwd, dim = 1)
 
     # takes a single input
     def early_exit(self, x):

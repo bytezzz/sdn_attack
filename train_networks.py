@@ -9,20 +9,19 @@ import os
 import random
 import numpy as np
 import pickle
+import wandb
 
 import aux_funcs  as af
 import network_architectures as arcs
 
 from architectures.CNNs.VGG import VGG
 
-def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='cpu', ckpt = None, start_epoch = 0):
+def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='cpu'):
+    wandb.login()
     print('Training models...')
 
     for base_model in untrained_models:
         trained_model, model_params = arcs.load_model(models_path, base_model, 0)
-        if ckpt:
-            with open(ckpt, 'rb') as f:
-                trained_model = pickle.load(f)
         dataset = af.get_dataset(model_params['task'])
 
         learning_rate = model_params['learning_rate']
@@ -30,7 +29,7 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
         weight_decay = model_params['weight_decay']
         milestones = model_params['milestones']
         gammas = model_params['gammas']
-        num_epochs = model_params['epochs'] - start_epoch
+        num_epochs = model_params['epochs']
 
         model_params['optimizer'] = 'SGD'
 
@@ -65,6 +64,11 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
 
         print('Training: {}...'.format(trained_model_name))
         trained_model.to(device)
+        run = wandb.init(
+            project = "Dynn",
+            name = trained_model_name,
+            config = model_params
+        )
         metrics = trained_model.train_func(trained_model, dataset, num_epochs, optimizer, scheduler, device=device)
         model_params['train_top1_acc'] = metrics['train_top1_acc']
         model_params['test_top1_acc'] = metrics['test_top1_acc']
@@ -76,6 +80,7 @@ def train(models_path, untrained_models, sdn=False, ic_only_sdn=False, device='c
         model_params['total_time'] = total_training_time
         print('Training took {} seconds...'.format(total_training_time))
         arcs.save_model(trained_model, model_params, models_path, trained_model_name, epoch=-1)
+        wandb.finish()
 
 def train_sdns(models_path, networks, ic_only=False, device='cpu'):
     if ic_only: # if we only train the ICs, we load a pre-trained CNN

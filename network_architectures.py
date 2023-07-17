@@ -75,7 +75,7 @@ def save_networks(model_name, model_params, models_path, save_type, in_memory = 
 
     return cnn_name, sdn_name
 
-def create_vgg16bn(models_path, task, save_type, get_params=False):
+def create_vgg16bn(models_path, task, save_type, get_params=False, use_rpf = False):
     print('Creating VGG16BN untrained {} models...'.format(task))
 
     model_params = get_task_params(task)
@@ -85,10 +85,16 @@ def create_vgg16bn(models_path, task, save_type, get_params=False):
         model_params['fc_layers'] = [2048, 1024]
 
     model_params['conv_channels']  = [64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512, 512]
-    model_name = '{}_vgg16bn'.format(task)
+    if use_rpf:
+        model_params['init_rpf_pannel'] = 8
+        model_params['use_rpf'] = True
+        model_name = '{}_vgg16_rpf'.format(task)
+        model_params['network_type'] = 'vgg16_rpf'
+    else:
+        model_name = '{}_vgg16'.format(task)
+        model_params['network_type'] = 'vgg16'
 
     # architecture params
-    model_params['network_type'] = 'vgg16'
     model_params['max_pool_sizes'] = [1, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2]
     model_params['conv_batch_norm'] = True
     model_params['init_weights'] = True
@@ -103,39 +109,22 @@ def create_vgg16bn(models_path, task, save_type, get_params=False):
     return save_networks(model_name, model_params, models_path, save_type)
 
 
-def create_resnet56(models_path, task, save_type, get_params=False, in_memory=False):
+def create_resnet56(models_path, task, save_type, get_params=False, in_memory=False, use_rpf = False):
     print('Creating resnet56 untrained {} models...'.format(task))
     model_params = get_task_params(task)
     model_params['block_type'] = 'basic'
     model_params['num_blocks'] = [9,9,9]
     model_params['add_ic'] = [[0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 0, 1, 0, 0], [0, 1, 0, 0, 0, 1, 0, 0, 0]] # 15, 30, 45, 60, 75, 90 percent of GFLOPs
 
-    model_name = '{}_resnet56'.format(task)
+    if use_rpf:
+        model_params['init_rpf_pannel'] = 8
+        model_params['use_rpf'] = True
+        model_name = '{}_resnet56_rpf'.format(task)
+        model_params['network_type'] = 'resnet56_rpf'
+    else:
+        model_name = '{}_resnet56'.format(task)
+        model_params['network_type'] = 'resnet56'
 
-    model_params['network_type'] = 'resnet56'
-    model_params['augment_training'] = True
-    model_params['init_weights'] = True
-
-    get_lr_params(model_params)
-
-
-    if get_params:
-        return model_params
-
-    return save_networks(model_name, model_params, models_path, save_type, in_memory)
-
-def create_resnet56_rpf(models_path, task, save_type, get_params=False, in_memory=False):
-    print('Creating resnet56 untrained {} models...'.format(task))
-    model_params = get_task_params(task)
-    model_params['block_type'] = 'basic'
-    model_params['num_blocks'] = [9,9,9]
-    model_params['add_ic'] = [[0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 0, 1, 0, 0], [0, 1, 0, 0, 0, 1, 0, 0, 0]] # 15, 30, 45, 60, 75, 90 percent of GFLOPs
-
-    model_params['init_rpf_pannel'] = 8
-    model_params['use_rpf'] = True
-    model_name = '{}_resnet56_rpf'.format(task)
-
-    model_params['network_type'] = 'resnet56_rpf'
     model_params['augment_training'] = True
     model_params['init_weights'] = True
 
@@ -171,12 +160,19 @@ def create_wideresnet32_4(models_path, task, save_type, get_params=False):
     return save_networks(model_name, model_params, models_path, save_type)
 
 
-def create_mobilenet(models_path, task, save_type, get_params=False):
+def create_mobilenet(models_path, task, save_type, get_params=False, use_rpf=False):
     print('Creating MobileNet untrained {} models...'.format(task))
     model_params = get_task_params(task)
-    model_name = '{}_mobilenet'.format(task)
 
-    model_params['network_type'] = 'mobilenet'
+    if use_rpf:
+        model_params['init_rpf_pannel'] = 8
+        model_params['use_rpf'] = True
+        model_name = '{}_mobilenet_rpf'.format(task)
+        model_params['network_type'] = 'mobilenet_rpf'
+    else:
+        model_name = '{}_mobilenet'.format(task)
+        model_params['network_type'] = 'mobilenet'
+
     model_params['cfg'] = [64, (128,2), 128, (256,2), 256, (512,2), 512, 512, 512, 512, 512, (1024,2), 1024]
     model_params['augment_training'] = True
     model_params['init_weights'] = True
@@ -229,8 +225,8 @@ def get_lr_params(model_params):
     else:
         model_params['weight_decay'] = 0.0001
 
-    model_params['learning_rate'] = 0.1
-    model_params['epochs'] = 175
+    model_params['learning_rate'] = 0.05
+    model_params['epochs'] = 150
     model_params['milestones'] = [60, 100, 125]
     model_params['gammas'] = [0.1, 0.1, 0.1]
 
@@ -344,11 +340,15 @@ def get_cnn(sdn):
 def get_net_params(net_type, task):
     if net_type == 'vgg16':
         return create_vgg16bn(None, task,  None, True)
+    elif net_type == 'vgg16_rpf':
+        return create_vgg16bn(None, task,  None, True, use_rpf=True)
     elif net_type == 'resnet56':
         return create_resnet56(None, task,  None, True)
     elif net_type == 'resnet56_rpf':
-        return create_resnet56_rpf(None, task, None, True)
+        return create_resnet56(None, task, None, True, use_rpf=True)
     elif net_type == 'wideresnet32_4':
         return create_wideresnet32_4(None, task,  None, True)
     elif net_type == 'mobilenet':
         return create_mobilenet(None, task,  None, True)
+    elif net_type == 'mobilenet_rpf':
+        return create_mobilenet(None, task,  None, True, use_rpf=True)

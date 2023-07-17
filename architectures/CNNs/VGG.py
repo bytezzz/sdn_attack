@@ -20,12 +20,12 @@ class ConvBlock(nn.Module):
 
         if batch_norm:
             conv_layers.append(nn.BatchNorm2d(output_channels))
-                
+
         conv_layers.append(nn.ReLU())
-                
+
         if max_pool_size > 1:
             conv_layers.append(nn.MaxPool2d(kernel_size=max_pool_size))
-        
+
         self.layers = nn.Sequential(*conv_layers)
 
     def forward(self, x):
@@ -43,7 +43,7 @@ class FcBlock(nn.Module):
             fc_layers.append(af.Flatten())
         fc_layers.append(nn.Linear(input_size, output_size))
         fc_layers.append(nn.ReLU())
-        fc_layers.append(nn.Dropout(0.5))        
+        fc_layers.append(nn.Dropout(0.5))
         self.layers = nn.Sequential(*fc_layers)
 
     def forward(self, x):
@@ -68,11 +68,26 @@ class VGG(nn.Module):
         self.test_func = mf.cnn_test
         self.num_output = 1
 
-        self.init_conv = nn.Sequential() # just for compatibility with other models
+        self.init_rpf_channels = params['init_rpf_pannel']
+        self.use_rpf = params['use_rpf']
+        self.in_channels = 16
+
+        init_conv = []
+        if self.use_rpf:
+            init_conv.append(nn.Conv2d(3, self.in_channels - self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+            init_conv.append(nn.Conv2d(3, self.init_rpf_channels, kernel_size=3, stride=1, padding=1, bias=False))
+        else:
+            init_conv.append(nn.Conv2d(3, self.in_channels, kernel_size=3, stride=1, padding=1, bias=False))
+
+        init_conv.append(nn.BatchNorm2d(self.in_channels))
+        init_conv.append(nn.ReLU())
+
+        self.init_conv = nn.Sequential(*init_conv) # just for compatibility with other models
 
         self.layers = nn.ModuleList()
         # add conv layers
-        input_channel = 3
+        #We changed input channels
+        input_channel = self.in_channels
         cur_input_size = self.input_size
         for layer_id, channel in enumerate(self.conv_channels):
             if self.max_pool_sizes[layer_id] == 2:
@@ -80,7 +95,7 @@ class VGG(nn.Module):
             conv_params =  (input_channel, channel, self.max_pool_sizes[layer_id], self.conv_batch_norm)
             self.layers.append(ConvBlock(conv_params))
             input_channel = channel
-        
+
         fc_input_size = cur_input_size*cur_input_size*self.conv_channels[-1]
 
         for layer_id, width in enumerate(self.fc_layer_sizes[:-1]):
@@ -88,10 +103,10 @@ class VGG(nn.Module):
             flatten = False
             if layer_id == 0:
                 flatten = True
-            
+
             self.layers.append(FcBlock(fc_params, flatten=flatten))
             fc_input_size = width
-        
+
         end_layers = []
         end_layers.append(nn.Linear(fc_input_size, self.fc_layer_sizes[-1]))
         end_layers.append(nn.Dropout(0.5))
@@ -101,14 +116,33 @@ class VGG(nn.Module):
         if self.init_weights:
             self.initialize_weights()
 
+    def rp_forward(self, x, out, kernel):
+        rp_out = kernel(x)
+        if out is None:
+            return rp_out
+        else:
+            out = torch.cat([out, rp_out], dim=1)
+            return out
+
     def forward(self, x):
-        fwd = self.init_conv(x)
+        if self.use_rpf:
+            out = self.init_conv[0](x)
+            out = self.rp_forward(x, out, self.init_conv[1])
+        else:
+            out = self.init_conv(x)
+
+        fwd = out
 
         for layer in self.layers:
             fwd = layer(fwd)
 
         fwd = self.end_layers(fwd)
         return fwd
+
+    def random_rp_matrix(self):
+        param = next(self.init_conv[0].parameters())
+        kernel_size = param.data.size()[-1]
+        param.data = torch.normal(mean=0.0, std=1/kernel_size, size=param.data.size()).to('cuda')
 
     def initialize_weights(self):
         for m in self.modules():
