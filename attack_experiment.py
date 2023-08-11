@@ -19,6 +19,8 @@ device = af.get_pytorch_device()
 models_path = 'networks/{}'.format(af.get_random_seed())
 af.create_path(models_path)
 af.set_logger('outputs/train_models'.format(af.get_random_seed()))
+if not os.path.exists('outputs'):
+        os.mkdir('outputs')
 
 tasks = ['cifar10','cifar100']
 cnns = []

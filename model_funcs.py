@@ -159,9 +159,9 @@ def sdn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
 
 
     std, upper_limit, lower_limit = get_limit(data)
-    epsilon = (4 / 255.) / std
+    epsilon = (8 / 255.) / std
     alpha = (2 / 255.) / std
-    attack_iters = 5
+    attack_iters = 10
     attack_config = (epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit)
     normalization = get_normalization(data)
 
@@ -441,9 +441,9 @@ def cnn_train(model, data, epochs, optimizer, scheduler, device='cpu'):
     metrics = {'epoch_times':[], 'test_top1_acc':[], 'test_top5_acc':[], 'train_top1_acc':[], 'train_top5_acc':[], 'lrs':[], 'robust_accuracy_fgsm': []}
 
     std, upper_limit, lower_limit = get_limit(data)
-    epsilon = (4 / 255.) / std
+    epsilon = (8 / 255.) / std
     alpha = (2 / 255.) / std
-    attack_iters = 5
+    attack_iters = 10
     attack_config = (epsilon ,alpha ,attack_iters, std, upper_limit, lower_limit)
     normalization = get_normalization(data)
 
